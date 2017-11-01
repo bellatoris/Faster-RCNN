@@ -1,5 +1,6 @@
 import math
 
+import torch
 import torch.nn as nn
 
 
@@ -120,8 +121,17 @@ class ResNet(nn.Module):
 def resnet101(num_classes, pretrained=False):
     model = ResNet([3, 4, 23, 3], num_classes)
     if pretrained:
-        pass
-        # model.load_state_dict(model_zoo.load_url(model_urls['resnet101']))
+        # # for resume code, update epoch and best loss
+        # original saved file with DataParallel
+        state_dict = torch.load('checkpoint.pth.tar')['state_dict']
+        # create new OrderedDict that does not contain `module.`
+        from collections import OrderedDict
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            name = k[7:]  # remove `module.`
+            new_state_dict[name] = v
+        # load params
+        model.load_state_dict(new_state_dict)
     return model
 
 

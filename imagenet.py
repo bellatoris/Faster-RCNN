@@ -24,7 +24,8 @@ def main():
     epochs = 90
     dataset = os.path.expanduser('~/data/imagenet')
 
-    resnet = torch.nn.DataParallel(resnet101(1000)).cuda()
+    resnet = torch.nn.DataParallel(resnet101(1000,
+                                             pretrained=True)).cuda()
     cudnn.benchmark = True
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -60,6 +61,10 @@ def main():
                                 momentum,
                                 weight_decay=1e-4,
                                 nesterov=True)
+
+    if True:
+        validate(val_loader, resnet, criterion)
+        return
 
     for epoch in range(epochs):
         adjust_learning_rate(learning_rate, optimizer, epoch)
