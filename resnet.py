@@ -118,12 +118,12 @@ class ResNet(nn.Module):
         return x
 
 
-def resnet101(num_classes, pretrained=False):
+def resnet101(num_classes, pretrained=None):
     model = ResNet([3, 4, 23, 3], num_classes)
-    if pretrained:
+    if pretrained is not None:
         # # for resume code, update epoch and best loss
         # original saved file with DataParallel
-        state_dict = torch.load('checkpoint.pth.tar')['state_dict']
+        state_dict = torch.load(pretrained)['state_dict']
         # create new OrderedDict that does not contain `module.`
         from collections import OrderedDict
         new_state_dict = OrderedDict()

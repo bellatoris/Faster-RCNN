@@ -25,7 +25,7 @@ def main():
     dataset = os.path.expanduser('~/data/imagenet')
 
     resnet = torch.nn.DataParallel(resnet101(1000,
-                                             pretrained=True)).cuda()
+                                             None)).cuda()
     cudnn.benchmark = True
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -37,7 +37,7 @@ def main():
         normalize,
     ])
 
-    train_dir = os.path.join(dataset, 'val')
+    train_dir = os.path.join(dataset, 'train')
     val_dir = os.path.join(dataset, 'val')
 
     train_loader = data.DataLoader(dataset=datasets.ImageFolder(train_dir,
@@ -62,9 +62,9 @@ def main():
                                 weight_decay=1e-4,
                                 nesterov=True)
 
-    if True:
-        validate(val_loader, resnet, criterion)
-        return
+    # if True:
+    #     validate(val_loader, resnet, criterion)
+    #     return
 
     for epoch in range(epochs):
         adjust_learning_rate(learning_rate, optimizer, epoch)
