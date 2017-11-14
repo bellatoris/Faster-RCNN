@@ -17,15 +17,18 @@ best_prec1 = 0
 def main():
     global best_prec1
 
-    batch_size = 90
+    batch_size = 80
     learning_rate = 0.1
     num_threads = 12
     momentum = 0.9
     epochs = 90
     dataset = os.path.expanduser('~/data/imagenet')
 
+    state_dict = torch.load('checkpoint.pth.tar')
+    start_epoch = state_dict['epoch']
+    best_prec1 = state_dict['best_prec1']
     resnet = torch.nn.DataParallel(resnet101(1000,
-                                             None)).cuda()
+                                             state_dict['state_dict'])).cuda()
     cudnn.benchmark = True
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -61,12 +64,13 @@ def main():
                                 momentum,
                                 weight_decay=1e-4,
                                 nesterov=True)
+    optimizer.load_state_dict(state_dict['optimizer'])
 
     # if True:
     #     validate(val_loader, resnet, criterion)
     #     return
 
-    for epoch in range(epochs):
+    for epoch in range(start_epoch, epochs):
         adjust_learning_rate(learning_rate, optimizer, epoch)
 
         # train for one epoch

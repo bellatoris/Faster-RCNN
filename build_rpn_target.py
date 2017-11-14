@@ -65,9 +65,8 @@ def build_rpn_targets(anchors, gt_boxes, num_proposals):
     positive_anchors = anchors[ids]
     gt = gt_boxes[anchor_iou_argmax[ids], :4]  # positive anchor's best matching gt
 
-    rpn_bbox[np.arange(gt.shape[0]), :] = box_refinement(positive_anchors, gt)
+    # rpn_bbox[np.arange(gt.shape[0]), :] = box_refinement(positive_anchors, gt)
 
-    """
     ix = 0  # index into rpn_bbox
     for i, a in zip(ids, anchors[ids]):
         # Closest gt box (it might have IoU < 0.7)
@@ -94,5 +93,5 @@ def build_rpn_targets(anchors, gt_boxes, num_proposals):
         ]
         # Normalize
         ix += 1
-    """
+
     return rpn_match, rpn_bbox

@@ -123,7 +123,7 @@ def resnet101(num_classes, pretrained=None):
     if pretrained is not None:
         # # for resume code, update epoch and best loss
         # original saved file with DataParallel
-        state_dict = torch.load(pretrained)['state_dict']
+        state_dict = pretrained
         # create new OrderedDict that does not contain `module.`
         from collections import OrderedDict
         new_state_dict = OrderedDict()

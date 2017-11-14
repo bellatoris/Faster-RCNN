@@ -10,8 +10,8 @@ import numpy as np
 
 def compute_iou(box, boxes, box_area, boxes_area):
     """Calculates IoU of the given box with the array of the given boxes.
-    box: 1D vector [x1, y1, x2, y2]
-    boxes: [boxes_count, (x1, y1, x2, y2)]
+    box: 1D vector [y1, x1, y2, x2]
+    boxes: [boxes_count, (y1, x1, y2, x2)]
     box_area: float. the area of 'box'
     boxes_area: array of length boxes_count.
 
@@ -19,10 +19,10 @@ def compute_iou(box, boxes, box_area, boxes_area):
           efficiency. Calculate once in the caller to avoid duplicate work.
     """
     # Calculate intersection area
-    x1 = np.maximum(box[0], boxes[:, 0])
-    x2 = np.minimum(box[2], boxes[:, 2])
-    y1 = np.maximum(box[1], boxes[:, 1])
-    y2 = np.minimum(box[3], boxes[:, 3])
+    y1 = np.maximum(box[0], boxes[:, 0])
+    y2 = np.minimum(box[2], boxes[:, 2])
+    x1 = np.maximum(box[1], boxes[:, 1])
+    x2 = np.minimum(box[3], boxes[:, 3])
 
     intersection = np.maximum(x2 - x1, 0) * np.maximum(y2 - y1, 0)
     union = box_area + boxes_area[:] - intersection[:]
@@ -33,8 +33,8 @@ def compute_iou(box, boxes, box_area, boxes_area):
 
 def compute_overlaps(boxes1, boxes2):
     """Computes Iou overlaps between two sets of boxes.
-    boxes1: [N, (x1, y1, x2, y2)].
-    boxes2: [K, (x1, y1, x2, y2)]
+    boxes1: [N, (y1, x1, y2, x2)].
+    boxes2: [K, (y1, x1, y2, x2)]
 
     overlaps: [N, K]
     For better performance, pass the largest set first and the smaller second.
@@ -55,7 +55,7 @@ def compute_overlaps(boxes1, boxes2):
 
 def non_max_suppression(boxes, scores, threshold):
     """Performs non-maximum suppression and returns indices of kept boxes.
-    boxes: [N, (x1, y1, x2, y2)]. Notice that (x2, y2) lays outside the box.
+    boxes: [N, (y1, x1, y2, x2)]. Notice that (y2, x2) lays outside the box.
     scores: 1-D array of box scores.
     threshold: float. IoU threshold to use for filtering"""
     assert boxes.shape[0] > 0
@@ -63,10 +63,10 @@ def non_max_suppression(boxes, scores, threshold):
         boxes = boxes.astype(np.float32)
 
     # Compute box areas
-    x1 = boxes[:, 0]
-    y1 = boxes[:, 1]
-    x2 = boxes[:, 2]
-    y2 = boxes[:, 3]
+    y1 = boxes[:, 0]
+    x1 = boxes[:, 1]
+    y2 = boxes[:, 2]
+    x2 = boxes[:, 3]
     area = (x2 - x1) * (y2 - y1)
 
     # Get indices of boxes sorted by scores (highest first)
@@ -92,52 +92,52 @@ def non_max_suppression(boxes, scores, threshold):
 
 def apply_box_deltas(boxes, deltas):
     """Applies the given deltas to the given boxes.
-    boxes: [N, (x1, y1, x2, y2)]. Note that (x2, y2) is outside the box.
-    deltas: [N, (dx, dy, log(dw), log(dh))]
+    boxes: [N, (y1, x1, y2, x2)]. Note that (y2, x2) is outside the box.
+    deltas: [N, (dy, dx, log(dh), log(dw))]
     """
     boxes = boxes.astype(np.float32)
     # Convert to x, y, w, h
-    width = boxes[:, 2] - boxes[:, 0]
-    height = boxes[:, 3] - boxes[:, 1]
-    center_x = boxes[:, 0] + 0.5 * width
-    center_y = boxes[:, 1] + 0.5 * height
+    height = boxes[:, 2] - boxes[:, 0]
+    width = boxes[:, 3] - boxes[:, 1]
+    center_y = boxes[:, 0] + 0.5 * height
+    center_x = boxes[:, 1] + 0.5 * width
     # Apply deltas
-    center_x += deltas[:, 0] * width
-    center_y += deltas[:, 1] * height
-    width *= np.exp(deltas[:, 2])
-    height *= np.exp(deltas[:, 3])
-    # Convert back to x1, y1, x2, y2
+    center_y += deltas[:, 0] * height
+    center_x += deltas[:, 1] * width
+    height *= np.exp(deltas[:, 2])
+    width *= np.exp(deltas[:, 3])
+    # Convert back to y1, x1, y2, x2
     x1 = center_x - 0.5 * width
     y1 = center_y - 0.5 * height
     x2 = x1 + width
     y2 = y1 + height
-    return np.stack([x1, y1, x2, y2], axis=1)
+    return np.stack([y1, x1, y2, x2], axis=1)
 
 
 def box_refinement(box, gt_box):
     """Compute refinement needed to transform to gt_box.
-    box and gt_box are [N, (x1, y1, x2, y2)]. (x2, y2) is
+    box and gt_box are [N, (y1, x1, y2, x2)]. (y2, x2) is
     assumed to be outside the box.
     """
     box = box.astype(np.float32)
     gt_box = gt_box.astype(np.float32)
 
-    width = box[:, 2] - box[:, 0]
-    height = box[:, 3] - box[:, 1]
-    center_x = box[:, 0] + 0.5 * width
-    center_y = box[:, 1] + 0.5 * height
+    height = box[:, 2] - box[:, 0]
+    width = box[:, 3] - box[:, 1]
+    center_y = box[:, 0] + 0.5 * height
+    center_x = box[:, 1] + 0.5 * width
 
-    gt_width = gt_box[:, 2] - gt_box[:, 0]
-    gt_height = gt_box[:, 3] - gt_box[:, 1]
-    gt_center_x = gt_box[:, 0] + 0.5 * gt_width
-    gt_center_y = gt_box[:, 1] + 0.5 * gt_height
+    gt_height = gt_box[:, 2] - gt_box[:, 0]
+    gt_width = gt_box[:, 3] - gt_box[:, 1]
+    gt_center_y = gt_box[:, 0] + 0.5 * gt_height
+    gt_center_x = gt_box[:, 1] + 0.5 * gt_width
 
     dx = (gt_center_x - center_x) / width
     dy = (gt_center_y - center_y) / height
-    dw = np.log(gt_width / width)
     dh = np.log(gt_height / height)
+    dw = np.log(gt_width / width)
 
-    return np.stack([dx, dy, dw, dh], axis=1)
+    return np.stack([dy, dx, dh, dw], axis=1)
 
 
 def trim_zeros(x):
