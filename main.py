@@ -39,6 +39,13 @@ def main():
     model = torch.nn.DataParallel(model).cuda()
     cudnn.benchmark = True
 
+    criterion = {
+        'cross_entropy': torch.nn.CrossEntropyLoss().cuda(),
+        'smooth_l1': torch.nn.SmoothL1Loss().cuda(),
+    }
+    criterion['cross_entropy'].size_average = False
+    criterion['smooth_l1'].size_average = False
+
     # define Optimizer
     optimizer = torch.optim.SGD(model.parameters(),
                                 learning_rate,
@@ -52,10 +59,10 @@ def main():
         adjust_learning_rate(learning_rate, optimizer, epoch)
 
         # train for one epoch
-        train(train_loader, model, optimizer, epoch, config)
+        train(train_loader, model, criterion, optimizer, epoch, config)
 
         # evaluate on validation set
-        loss = validate(val_loader, model)
+        loss = validate(val_loader, model, criterion, config)
 
         # remember best prec@1 and save checkpoint
         is_best = loss < best_loss
@@ -70,11 +77,9 @@ def main():
 
 def get_data_loader(data_type, batch_size, num_threads):
     root_dir = os.path.expanduser('~/data/coco')
-    data_dir = '{}/images/{}'.format(root_dir, data_type)
-
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
-    det = CocoDetection(root=root_dir)
+    det = CocoDetection(root_dir, normalize)
     det.load_coco(data_type)
 
     if data_type == 'train':
@@ -93,15 +98,52 @@ def make_gt_boxes(target):
     gt_boxes = []
 
     for t in target:
-        bbox = torch.cat(t['bbox']).numpy()
-        cls = t['category_id'].numpy()
+        bbox = t['bbox'].numpy()
+        cls = t['category_id'].numpy()[:, np.newaxis]
 
         gt_boxes.append(np.hstack((bbox, cls)))
 
     return np.vstack(gt_boxes)
 
 
-def train(train_loader, model, optimizer, epoch, config):
+def get_variable_from_numpy(ndarray):
+    out = torch.from_numpy(ndarray).cuda()
+    return torch.autograd.Variable(out)
+
+
+def get_inds_inside(img_shape, anchors):
+    # Find anchors inside image
+    inds_inside = np.where(
+        (anchors[:, 0] >= 0) &
+        (anchors[:, 1] >= 0) &
+        (anchors[:, 2] < img_shape[0]) &  # height
+        (anchors[:, 3] < img_shape[1])  # width
+    )[0]
+
+    return inds_inside
+
+
+def make_rpn_loss(target_match, target_bbox, match, bbox, criterion):
+    match_inds = np.where(target_match != 0)[0]
+    positive_inds = np.where(target_match == 1)[0]
+
+    target_match = target_match[match_inds]
+    target_match += 1
+    target_match = np.divide(target_match, 2)
+
+    target_match = get_variable_from_numpy(target_match.astype(int))
+    target_bbox = get_variable_from_numpy(target_bbox.astype(np.float32))
+    match_inds = get_variable_from_numpy(match_inds)
+    positive_inds = get_variable_from_numpy(positive_inds)
+
+    match_loss = criterion['cross_entropy'](match[match_inds], target_match)
+    bbox_loss = criterion['smooth_l1'](bbox[positive_inds],
+                                       target_bbox[:len(positive_inds)])
+
+    return match_loss, bbox_loss
+
+
+def train(train_loader, model, criterion, optimizer, epoch, config):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -121,27 +163,28 @@ def train(train_loader, model, optimizer, epoch, config):
         gt_boxes = make_gt_boxes(target)
 
         # compute output
-        feature, cls, bbox = model(input_var)
+        feature, match, bbox = model(input_var)
         feature_shape = feature.shape[2:]
         anchors = generate_anchors(scales, ratios, feature_shape,
                                    feature_stride, anchor_stride)
 
-        # Find anchors inside image
-        img_shape = input_var.shape[2:]
-        inds_inside = np.where(
-            (anchors[:, 0] >= 0) &
-            (anchors[:, 1] >= 0) &
-            (anchors[:, 2] < img_shape[0]) &  # height
-            (anchors[:, 3] < img_shape[1])  # width
-        )[0]
-
+        inds_inside = get_inds_inside(input_var.shape[2:], anchors)
         anchors_inside = anchors[inds_inside]
         target_match, target_bbox = build_rpn_targets(anchors_inside,
                                                       gt_boxes,
                                                       num_proposals)
 
-        loss = 0
+        inds_inside = get_variable_from_numpy(inds_inside)
+        match_inside = match[inds_inside]
+        bbox_inside = bbox[inds_inside]
 
+        match_loss, bbox_loss = make_rpn_loss(target_match, target_bbox,
+                                              match_inside, bbox_inside,
+                                              criterion)
+        match_loss = match_loss / num_proposals
+        bbox_loss = bbox_loss / (feature_shape[0] * feature_shape[1])
+
+        loss = bbox_loss * 10 + match_loss
         # measure accuracy and record loss
         losses.update(loss.data[0], _input.size(0))
 
@@ -159,24 +202,49 @@ def train(train_loader, model, optimizer, epoch, config):
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})'.format(
-                epoch, i, len(train_loader), batch_time=batch_time,
-                data_time=data_time, loss=losses))
+                    epoch, i, len(train_loader), batch_time=batch_time,
+                    data_time=data_time, loss=losses))
 
 
-def validate(val_loader, model):
+def validate(val_loader, model, criterion, config):
     batch_time = AverageMeter()
     losses = AverageMeter()
+
+    scales = config['scales']
+    ratios = config['ratios']
+    feature_stride = config['feature_stride']
+    anchor_stride = config['anchor_stride']
+    num_proposals = config['num_proposals']
 
     end = time.time()
     for i, (_input, target) in enumerate(val_loader):
         target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(_input, volatile=True)
-        target_var = torch.autograd.Variable(target, volatile=True)
+        input_var = torch.autograd.Variable(_input)
+        gt_boxes = make_gt_boxes(target)
 
         # compute output
-        output = model(input_var)
-        loss = 0
+        feature, match, bbox = model(input_var)
+        feature_shape = feature.shape[2:]
+        anchors = generate_anchors(scales, ratios, feature_shape,
+                                   feature_stride, anchor_stride)
 
+        inds_inside = get_inds_inside(input_var.shape[2:], anchors)
+        anchors_inside = anchors[inds_inside]
+        target_match, target_bbox = build_rpn_targets(anchors_inside,
+                                                      gt_boxes,
+                                                      num_proposals)
+
+        inds_inside = get_variable_from_numpy(inds_inside)
+        match_inside = match[inds_inside]
+        bbox_inside = bbox[inds_inside]
+
+        match_loss, bbox_loss = make_rpn_loss(target_match, target_bbox,
+                                              match_inside, bbox_inside,
+                                              criterion)
+        match_loss = match_loss / num_proposals
+        bbox_loss = bbox_loss / (feature_shape[0] * feature_shape[1])
+
+        loss = bbox_loss * 10 + match_loss
         # measure accuracy and record loss
         losses.update(loss.data[0], _input.size(0))
 
@@ -188,15 +256,15 @@ def validate(val_loader, model):
             print('Test: [{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})'.format(
-                i, len(val_loader), batch_time=batch_time, loss=losses))
+                    i, len(val_loader), batch_time=batch_time, loss=losses))
 
     return losses.avg
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+def save_checkpoint(state, is_best, filename='faster_rcnn_checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+        shutil.copyfile(filename, 'faster_rcnn_best.pth.tar')
 
 
 class AverageMeter(object):

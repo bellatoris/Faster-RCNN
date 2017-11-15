@@ -8,8 +8,9 @@ from torchvision import transforms
 
 
 class CocoDetection(data.Dataset):
-    def __init__(self, root):
+    def __init__(self, root, transform):
         self.root = root
+        self.transform = transform
 
         self.image_info = []
         # Background is always the first class
@@ -43,12 +44,15 @@ class CocoDetection(data.Dataset):
 
         # Add images
         for i in image_ids:
+            ann_ids = coco.getAnnIds(imgIds=[i], iscrowd=False)
+            if not ann_ids:
+                continue
+
             self.add_image('coco', image_id=i,
                            path=os.path.join(image_dir, coco.imgs[i]['file_name']),
                            width=coco.imgs[i]['width'],
                            height=coco.imgs[i]['height'],
-                           annotations=coco.loadAnns(coco.getAnnIds(imgIds=[i],
-                                                                    iscrowd=False)))
+                           annotations=coco.loadAnns(ann_ids))
 
     def add_class(self, source, class_id, class_name):
         assert '.' not in source, 'Source name cannot contain a dot'
@@ -80,6 +84,7 @@ class CocoDetection(data.Dataset):
         img = Image.open(path).convert('RGB')
         img, scale = resize(img, 600)
         img = transforms.to_tensor(img)
+        img = self.transform(img)
 
         for t in target:
             x1, y1, w, h = t['bbox']

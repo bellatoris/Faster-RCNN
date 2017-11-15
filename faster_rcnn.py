@@ -16,8 +16,8 @@ class FasterRCNN(nn.Module):
 
     def forward(self, _input):
         feature = self.feature_extractor(_input)
-        cls, bbox = self.proposal_generator(feature)
-        return feature, cls, bbox
+        match, bbox = self.proposal_generator(feature)
+        return feature, match, bbox
 
 
 class ProposalGenerator(nn.Module):
@@ -45,10 +45,10 @@ class ProposalGenerator(nn.Module):
         out = out.view(out.size(0), out.size(1), 9, 6)
         out = out.view(-1, 6)
 
-        cls = out[:, :2]  # [9xHxW, 2]
+        match = out[:, :2]  # [9xHxW, 2]
         bbox = out[:, 2:]  # [9xHxW, 4]
 
-        return cls, bbox
+        return match, bbox
 
 
 # class BoxClassifier(nn.Module):
