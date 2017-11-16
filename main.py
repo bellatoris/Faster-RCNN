@@ -31,20 +31,22 @@ def main():
         'ratios': [2, 1, 0.5],
         'feature_stride': 16,
         'anchor_stride': 1,
-        'num_proposals': 256,
+        'rpn_batch_size': 256,
+        'num_proposals': 2000,
     }
-
-    pretrained = torch.load('resnet_pretrained.pth.tar')
-    model = FasterRCNN(resnet101(1000, pretrained['state_dict']))
-    model = torch.nn.DataParallel(model).cuda()
-    cudnn.benchmark = True
-
     criterion = {
         'cross_entropy': torch.nn.CrossEntropyLoss().cuda(),
         'smooth_l1': torch.nn.SmoothL1Loss().cuda(),
     }
     criterion['cross_entropy'].size_average = False
     criterion['smooth_l1'].size_average = False
+
+    pretrained = torch.load('resnet_pretrained.pth.tar')
+    model = FasterRCNN(resnet101(1000, pretrained['state_dict']),
+                       criterion,
+                       config)
+    model = torch.nn.DataParallel(model).cuda()
+    cudnn.benchmark = True
 
     # define Optimizer
     optimizer = torch.optim.SGD(model.parameters(),
@@ -59,7 +61,7 @@ def main():
         adjust_learning_rate(learning_rate, optimizer, epoch)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, config)
+        train(train_loader, model, optimizer, epoch)
 
         # evaluate on validation set
         loss = validate(val_loader, model, criterion, config)
@@ -106,53 +108,10 @@ def make_gt_boxes(target):
     return np.vstack(gt_boxes)
 
 
-def get_variable_from_numpy(ndarray):
-    out = torch.from_numpy(ndarray).cuda()
-    return torch.autograd.Variable(out)
-
-
-def get_inds_inside(img_shape, anchors):
-    # Find anchors inside image
-    inds_inside = np.where(
-        (anchors[:, 0] >= 0) &
-        (anchors[:, 1] >= 0) &
-        (anchors[:, 2] < img_shape[0]) &  # height
-        (anchors[:, 3] < img_shape[1])  # width
-    )[0]
-
-    return inds_inside
-
-
-def make_rpn_loss(target_match, target_bbox, match, bbox, criterion):
-    match_inds = np.where(target_match != 0)[0]
-    positive_inds = np.where(target_match == 1)[0]
-
-    target_match = target_match[match_inds]
-    target_match += 1
-    target_match = np.divide(target_match, 2)
-
-    target_match = get_variable_from_numpy(target_match.astype(int))
-    target_bbox = get_variable_from_numpy(target_bbox.astype(np.float32))
-    match_inds = get_variable_from_numpy(match_inds)
-    positive_inds = get_variable_from_numpy(positive_inds)
-
-    match_loss = criterion['cross_entropy'](match[match_inds], target_match)
-    bbox_loss = criterion['smooth_l1'](bbox[positive_inds],
-                                       target_bbox[:len(positive_inds)])
-
-    return match_loss, bbox_loss
-
-
-def train(train_loader, model, criterion, optimizer, epoch, config):
+def train(train_loader, model, optimizer, epoch, ):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
-
-    scales = config['scales']
-    ratios = config['ratios']
-    feature_stride = config['feature_stride']
-    anchor_stride = config['anchor_stride']
-    num_proposals = config['num_proposals']
 
     end = time.time()
     for i, (_input, target) in enumerate(train_loader):
@@ -162,27 +121,8 @@ def train(train_loader, model, criterion, optimizer, epoch, config):
         input_var = torch.autograd.Variable(_input)
         gt_boxes = make_gt_boxes(target)
 
-        # compute output
-        feature, match, bbox = model(input_var)
-        feature_shape = feature.shape[2:]
-        anchors = generate_anchors(scales, ratios, feature_shape,
-                                   feature_stride, anchor_stride)
-
-        inds_inside = get_inds_inside(input_var.shape[2:], anchors)
-        anchors_inside = anchors[inds_inside]
-        target_match, target_bbox = build_rpn_targets(anchors_inside,
-                                                      gt_boxes,
-                                                      num_proposals)
-
-        inds_inside = get_variable_from_numpy(inds_inside)
-        match_inside = match[inds_inside]
-        bbox_inside = bbox[inds_inside]
-
-        match_loss, bbox_loss = make_rpn_loss(target_match, target_bbox,
-                                              match_inside, bbox_inside,
-                                              criterion)
-        match_loss = match_loss / num_proposals
-        bbox_loss = bbox_loss / (feature_shape[0] * feature_shape[1])
+        # compute loss
+        match_loss, bbox_loss = model(input_var, gt_boxes)
 
         loss = bbox_loss * 10 + match_loss
         # measure accuracy and record loss

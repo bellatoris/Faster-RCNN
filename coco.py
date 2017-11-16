@@ -46,6 +46,7 @@ class CocoDetection(data.Dataset):
         for i in image_ids:
             ann_ids = coco.getAnnIds(imgIds=[i], iscrowd=False)
             if not ann_ids:
+                # skip no annotation image
                 continue
 
             self.add_image('coco', image_id=i,

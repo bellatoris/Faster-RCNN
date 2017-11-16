@@ -6,6 +6,12 @@ Licensed under the MIT License (see LICENSE for details)
 Written by Waleed Abdulla
 """
 import numpy as np
+import torch
+
+
+def get_variable_from_numpy(ndarray):
+    out = torch.from_numpy(ndarray).cuda()
+    return torch.autograd.Variable(out)
 
 
 def compute_iou(box, boxes, box_area, boxes_area):
@@ -95,7 +101,9 @@ def apply_box_deltas(boxes, deltas):
     boxes: [N, (y1, x1, y2, x2)]. Note that (y2, x2) is outside the box.
     deltas: [N, (dy, dx, log(dh), log(dw))]
     """
-    boxes = boxes.astype(np.float32)
+    if type(boxes) == np.ndarray:
+        boxes = boxes.astype(np.float32)
+
     # Convert to x, y, w, h
     height = boxes[:, 2] - boxes[:, 0]
     width = boxes[:, 3] - boxes[:, 1]
@@ -104,14 +112,25 @@ def apply_box_deltas(boxes, deltas):
     # Apply deltas
     center_y += deltas[:, 0] * height
     center_x += deltas[:, 1] * width
-    height *= np.exp(deltas[:, 2])
-    width *= np.exp(deltas[:, 3])
+    if type(boxes) == np.ndarray:
+        height *= np.exp(deltas[:, 2])
+        width *= np.exp(deltas[:, 3])
+    else:
+        height *= torch.exp(deltas[:, 2])
+        width *= torch.exp(deltas[:, 3])
     # Convert back to y1, x1, y2, x2
     x1 = center_x - 0.5 * width
     y1 = center_y - 0.5 * height
     x2 = x1 + width
     y2 = y1 + height
-    return np.stack([y1, x1, y2, x2], axis=1)
+
+    if type(boxes) == np.ndarray:
+        return np.stack([y1, x1, y2, x2], axis=1)
+    else:
+        return torch.cat([y1.unsqueeze(1),
+                          x1.unsqueeze(1),
+                          y2.unsqueeze(1),
+                          x2.unsqueeze(1)], dim=1)
 
 
 def box_refinement(box, gt_box):
@@ -134,9 +153,12 @@ def box_refinement(box, gt_box):
 
     dx = (gt_center_x - center_x) / width
     dy = (gt_center_y - center_y) / height
-    dh = np.log(gt_height / height)
-    dw = np.log(gt_width / width)
-
+    if type(gt_height == np.ndarray):
+        dh = np.log(gt_height / height)
+        dw = np.log(gt_width / width)
+    else:
+        dh = torch.log(gt_height / height)
+        dw = torch.log(gt_width / width)
     return np.stack([dy, dx, dh, dw], axis=1)
 
 

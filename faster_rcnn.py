@@ -1,12 +1,25 @@
+import numpy as np
+import torch
 from torch import nn
+
+from box_classifier_network import BoxClassifier
+from build_detection_target import build_detection_target
+from build_rpn_target import build_rpn_targets
+from generate_anchors import generate_anchors
+from region_proposal_network import ProposalGenerator, Proposal
+from utils import get_variable_from_numpy
 
 
 class FasterRCNN(nn.Module):
-    def __init__(self, pretrained_clf):
+    def __init__(self, pretrained_clf, criterion, config):
         super().__init__()
         children = list(pretrained_clf.children())
         self.feature_extractor = nn.Sequential(*children[:7])
         self.proposal_generator = ProposalGenerator()
+        self.proposal = Proposal()
+        self.box_classifier = BoxClassifier(children[7])
+        self.criterion = criterion
+        self.config = config
         # self.box_classifier = BoxClassifier()
 
         # Freeze batch normalization weights
@@ -14,46 +27,83 @@ class FasterRCNN(nn.Module):
             if isinstance(m, nn.BatchNorm2d):
                 m.eval()
 
-    def forward(self, _input):
+    def forward(self, _input, gt_boxes):
+        # get config
+        scales = self.config['scales']
+        ratios = self.config['ratios']
+        feature_stride = self.config['feature_stride']
+        anchor_stride = self.config['anchor_stride']
+        rpn_batch_size = self.config['rpn_batch_size']
+        num_proposals = self.config['num_proposals']
+
+        # extract feature map
         feature = self.feature_extractor(_input)
+
+        # get match class and bounding box
         match, bbox = self.proposal_generator(feature)
-        return feature, match, bbox
+
+        # get argument for rpn loss
+        feature_shape = feature.shape[2:]
+        anchors = generate_anchors(scales, ratios, feature_shape,
+                                   feature_stride, anchor_stride)
+
+        inds_inside = get_inds_inside(_input.shape[2:], anchors)
+        anchors_inside = anchors[inds_inside]
+
+        # make rpn target
+        target_match, target_bbox = build_rpn_targets(anchors_inside,
+                                                      gt_boxes,
+                                                      rpn_batch_size)
+
+        # get match and bbox only inside the image
+        inds_inside = get_variable_from_numpy(inds_inside)
+        match_inside = match[inds_inside]
+        bbox_inside = bbox[inds_inside]
+
+        match_loss, bbox_loss = make_rpn_loss(target_match, target_bbox,
+                                              match_inside, bbox_inside,
+                                              self.criterion)
+
+        match_loss = match_loss / rpn_batch_size
+        bbox_loss = bbox_loss / (feature_shape[0] * feature_shape[1])
+
+        proposal_bbox = self.proposal(match_inside, bbox_inside,
+                                      anchors_inside, _input.shape[2:],
+                                      num_proposals)
+
+        rois, class_ids, deltas = build_detection_target(proposal_bbox.data,
+                                                         gt_boxes)
+
+        return match_loss, bbox_loss
 
 
-class ProposalGenerator(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv2d(1024, 256, kernel_size=3, bias=False,
-                               padding=1)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(256, (4 + 2) * 9, kernel_size=1,
-                               bias=False)
+def get_inds_inside(img_shape, anchors):
+    # Find anchors inside image
+    inds_inside = np.where(
+        (anchors[:, 0] >= 0) &
+        (anchors[:, 1] >= 0) &
+        (anchors[:, 2] < img_shape[0]) &  # height
+        (anchors[:, 3] < img_shape[1])  # width
+    )[0]
 
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                m.weight.data.normal_(0, 0.01)
-
-    def forward(self, _input):
-        out = self.conv1(_input)
-        out = self.relu(out)
-        out = self.conv2(out)
-        # out's shape is [1, 54, H, W] and H * W is the number of anchors
-        out = out.view(out.size(1), out.size(2), out.size(3))
-        out = out.transpose(0, 1)
-        out = out.transpose(1, 2)  # [H, W, 54]
-        out = out.contiguous()
-        out = out.view(out.size(0), out.size(1), 9, 6)
-        out = out.view(-1, 6)
-
-        match = out[:, :2]  # [9xHxW, 2]
-        bbox = out[:, 2:]  # [9xHxW, 4]
-
-        return match, bbox
+    return inds_inside
 
 
-# class BoxClassifier(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#
-#     def forward(self, *_input):
-#         return _input
+def make_rpn_loss(target_match, target_bbox, match, bbox, criterion):
+    match_inds = np.where(target_match != 0)[0]
+    positive_inds = np.where(target_match == 1)[0]
+
+    target_match = target_match[match_inds]
+    target_match += 1
+    target_match = np.divide(target_match, 2)
+
+    target_match = get_variable_from_numpy(target_match.astype(int))
+    target_bbox = get_variable_from_numpy(target_bbox.astype(np.float32))
+    match_inds = get_variable_from_numpy(match_inds)
+    positive_inds = get_variable_from_numpy(positive_inds)
+
+    match_loss = criterion['cross_entropy'](match[match_inds], target_match)
+    bbox_loss = criterion['smooth_l1'](bbox[positive_inds],
+                                       target_bbox[:len(positive_inds)])
+
+    return match_loss, bbox_loss

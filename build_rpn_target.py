@@ -3,7 +3,7 @@ import numpy as np
 from utils import compute_overlaps, box_refinement
 
 
-def build_rpn_targets(anchors, gt_boxes, num_proposals):
+def build_rpn_targets(anchors, gt_boxes, rpn_batch_size):
     """Given the anchors and GT boxes, compute overlaps and identify positive
     anchors and deltas to refine them to match their corresponding GT boxes.
 
@@ -18,7 +18,7 @@ def build_rpn_targets(anchors, gt_boxes, num_proposals):
     # RPN_match: 1 = positive anchor, -1 = negative anchor, 0 = neutral
     rpn_match = np.zeros([anchors.shape[0]], dtype=np.int32)
     # RPN bounding boxes: [max anchors per image, (dy, dx, log(dh), log(dw))]
-    rpn_bbox = np.zeros((num_proposals, 4))
+    rpn_bbox = np.zeros((rpn_batch_size, 4))
 
     # Compute overlaps [num_anchors, num_gt_boxes]
     # Each cell contains the IoU of an anchor and GT box.
@@ -46,14 +46,14 @@ def build_rpn_targets(anchors, gt_boxes, num_proposals):
     # Subsample to balance positive and negative anchors
     # Don't let positives be more than half the anchors
     ids = np.where(rpn_match == 1)[0]
-    extra = len(ids) - (num_proposals // 2)
+    extra = len(ids) - (rpn_batch_size // 2)
     if extra > 0:
         # Reset the extra ones to neutral
         ids = np.random.choice(ids, extra, replace=False)
         rpn_match[ids] = 0
     # Same for negative proposals
     ids = np.where(rpn_match == -1)[0]
-    extra = len(ids) - (num_proposals - np.sum(rpn_match == 1))
+    extra = len(ids) - (rpn_batch_size - np.sum(rpn_match == 1))
     if extra > 0:
         # Reset the extra ones to neutral
         ids = np.random.choice(ids, extra, replace=False)
