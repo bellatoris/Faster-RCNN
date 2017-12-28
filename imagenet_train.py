@@ -1,15 +1,14 @@
 import os
 import shutil
-
 import time
+
 import torch
 from torch.backends import cudnn
 from torch.utils import data
-from torchvision import transforms
 from torchvision import datasets
+from torchvision import transforms
 
-from resnet import resnet101
-
+from resnet import resnet101, delete_module
 
 best_prec1 = 0
 
@@ -21,14 +20,18 @@ def main():
     learning_rate = 0.1
     num_threads = 12
     momentum = 0.9
-    epochs = 90
+    epochs = 180
     dataset = os.path.expanduser('~/data/imagenet')
 
-    state_dict = torch.load('checkpoint.pth.tar')
+    state_dict = torch.load('model_best.pth.tar')
     start_epoch = state_dict['epoch']
     best_prec1 = state_dict['best_prec1']
+    pretrained = delete_module(state_dict['state_dict'])
+
+    # pretrained = model_zoo.load_url(model_urls['resnet101'])
+    # pretrained = load_until_layer3(pretrained)
     resnet = torch.nn.DataParallel(resnet101(1000,
-                                             state_dict['state_dict'])).cuda()
+                                             pretrained)).cuda()
     cudnn.benchmark = True
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -36,6 +39,7 @@ def main():
     transform = transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
+        # transforms.CenterCrop(224),
         transforms.ToTensor(),
         normalize,
     ])
@@ -64,11 +68,11 @@ def main():
                                 momentum,
                                 weight_decay=1e-4,
                                 nesterov=True)
-    optimizer.load_state_dict(state_dict['optimizer'])
+    # optimizer.load_state_dict(state_dict['optimizer'])
 
-    # if True:
-    #     validate(val_loader, resnet, criterion)
-    #     return
+    if True:
+        validate(val_loader, resnet, criterion)
+        return
 
     for epoch in range(start_epoch, epochs):
         adjust_learning_rate(learning_rate, optimizer, epoch)

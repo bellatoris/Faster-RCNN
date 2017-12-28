@@ -138,8 +138,9 @@ def box_refinement(box, gt_box):
     box and gt_box are [N, (y1, x1, y2, x2)]. (y2, x2) is
     assumed to be outside the box.
     """
-    box = box.astype(np.float32)
-    gt_box = gt_box.astype(np.float32)
+    if type(gt_box) == np.ndarray:
+        box = box.astype(np.float32)
+        gt_box = gt_box.astype(np.float32)
 
     height = box[:, 2] - box[:, 0]
     width = box[:, 3] - box[:, 1]
@@ -153,13 +154,17 @@ def box_refinement(box, gt_box):
 
     dx = (gt_center_x - center_x) / width
     dy = (gt_center_y - center_y) / height
-    if type(gt_height == np.ndarray):
+    if type(gt_box) == np.ndarray:
         dh = np.log(gt_height / height)
         dw = np.log(gt_width / width)
+        return np.stack([dy, dx, dh, dw], axis=1)
     else:
         dh = torch.log(gt_height / height)
         dw = torch.log(gt_width / width)
-    return np.stack([dy, dx, dh, dw], axis=1)
+        return torch.cat([dy.unsqueeze(1),
+                          dx.unsqueeze(1),
+                          dh.unsqueeze(1),
+                          dw.unsqueeze(1)], dim=1)
 
 
 def trim_zeros(x):

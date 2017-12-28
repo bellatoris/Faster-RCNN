@@ -12,7 +12,7 @@ from build_rpn_target import build_rpn_targets
 from coco import CocoDetection
 from faster_rcnn import FasterRCNN
 from generate_anchors import generate_anchors
-from resnet import resnet101
+from resnet import resnet101, delete_module
 
 best_loss = 1000000
 
@@ -41,8 +41,9 @@ def main():
     criterion['cross_entropy'].size_average = False
     criterion['smooth_l1'].size_average = False
 
-    pretrained = torch.load('resnet_pretrained.pth.tar')
-    model = FasterRCNN(resnet101(1000, pretrained['state_dict']),
+    pretrained = torch.load('model_best.pth.tar')
+    model = FasterRCNN(resnet101(1000,
+                                 delete_module(pretrained['state_dict'])),
                        criterion,
                        config)
     model = torch.nn.DataParallel(model).cuda()

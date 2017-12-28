@@ -4,6 +4,15 @@ import torch
 import torch.nn as nn
 
 
+model_urls = {
+    'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
+    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
+    'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
+    'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
+    'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
+}
+
+
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -121,19 +130,33 @@ class ResNet(nn.Module):
 def resnet101(num_classes, pretrained=None):
     model = ResNet([3, 4, 23, 3], num_classes)
     if pretrained is not None:
-        # # for resume code, update epoch and best loss
-        # original saved file with DataParallel
-        state_dict = pretrained
-        # create new OrderedDict that does not contain `module.`
-        from collections import OrderedDict
-        new_state_dict = OrderedDict()
-        for k, v in state_dict.items():
-            name = k[7:]  # remove `module.`
-            new_state_dict[name] = v
-        # load params
-        model.load_state_dict(new_state_dict)
+        model.load_state_dict(pretrained, strict=False)
     return model
 
 
 if __name__ == '__main__':
     a = resnet101(1000)
+
+
+def load_until_layer3(pretrained):
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+    for k, v in pretrained.items():
+        if k.find('layer4') == -1 and k.find('fc') == -1:
+            new_state_dict[k] = v
+
+    return new_state_dict
+
+
+def delete_module(pretrained):
+    # # for resume code, update epoch and best loss
+    # original saved file with DataParallel
+    state_dict = pretrained
+    # create new OrderedDict that does not contain `module.`
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        name = k[7:]  # remove `module.`
+        new_state_dict[name] = v
+
+    return new_state_dict
